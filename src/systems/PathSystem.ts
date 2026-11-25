@@ -1,7 +1,8 @@
 
-import { MapDefinition, GridPoint } from "../data/maps";
-import { IsometricEngine, ScreenPoint } from "../core/IsometricEngine";
-import { PathPoint } from "../entities/Enemy";
+import type { MapDefinition, GridPoint } from "../data/maps";
+import { IsometricEngine } from "../core/IsometricEngine";
+import type { ScreenPoint } from "../core/IsometricEngine";
+import type { PathPoint } from "../entities/Enemy";
 
 export class PathSystem {
   static createScreenPath(

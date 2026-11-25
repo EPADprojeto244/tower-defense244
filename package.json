@@ -1,17 +1,17 @@
 {
   "name": "tower-defense244",
-  "version": "1.0.0",
   "private": true,
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc -b && vite build",
     "preview": "vite preview",
     "test": "vitest run"
   },
   "devDependencies": {
-    "typescript": "^5.7.2",
-    "vite": "^6.0.5",
-    "vitest": "^3.0.5"
+    "typescript": "^5.7.3",
+    "vite": "^6.0.7",
+    "vitest": "^2.1.8"
   }
 }
