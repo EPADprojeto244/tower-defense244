@@ -1,424 +1,504 @@
+import { MAPS } from "../data/maps";
+import {
+  TOWERS,
+  UPGRADE_COST,
+  type TowerId
+} from "../data/towers";
 
+import { Enemy } from "../entities/Enemy";
+import { Tower } from "../entities/Tower";
+
+import { Renderer } from "./Renderer";
 import { GameLoop } from "./GameLoop";
 import { InputManager } from "./InputManager";
-import { Renderer } from "./Renderer";
 import { StateManager } from "./StateManager";
-import { IsometricEngine } from "./IsometricEngine";
 
-import {
-  MAPS,
-  MapDefinition,
-  isPathCell
-} from "../data/maps";
+import { EconomySystem } from "../systems/EconomySystem";
+import { CombatSystem } from "../systems/CombatSystem";
+import { WaveSystem } from "../systems/WaveSystem";
+import { UpgradeSystem } from "../systems/UpgradeSystem";
+import { AbilitySystem } from "../systems/AbilitySystem";
+import { SaveSystem } from "../systems/SaveSystem";
+import { AudioSystem } from "../systems/AudioSystem";
 
 export class Game {
-  private readonly renderer: Renderer;
-  private readonly input: InputManager;
-  private readonly state = new StateManager();
-  private readonly iso = new IsometricEngine(76, 38);
-  private readonly loop: GameLoop;
+  private renderer: Renderer;
+  private loop: GameLoop;
 
-  private currentMap: MapDefinition = MAPS[0];
-  private animationTime = 0;
+  private state = new StateManager();
+  private economy = new EconomySystem();
+  private combat = new CombatSystem();
+  private waves = new WaveSystem();
+  private upgrades = new UpgradeSystem();
+  private abilities = new AbilitySystem();
+  private save = new SaveSystem();
+  private audio = new AudioSystem();
 
-  constructor(canvas: HTMLCanvasElement) {
-    this.renderer = new Renderer(canvas);
-    this.input = new InputManager(canvas);
+  private mapIndex = 0;
+
+  private towers: Tower[] = [];
+  private enemies: Enemy[] = [];
+
+  private selected: Tower | null = null;
+  private placing: TowerId | null = null;
+
+  private kills = 0;
+  private autoTimer = 2;
+
+  constructor(
+    private canvas: HTMLCanvasElement
+  ) {
+    const context = canvas.getContext("2d");
+
+    if (!context) {
+      throw new Error("Canvas não suportado.");
+    }
+
+    this.renderer = new Renderer(context);
 
     this.loop = new GameLoop(
-      (delta) => this.update(delta),
+      dt => this.update(dt),
       () => this.render()
     );
+
+    new InputManager(
+      canvas,
+      (x, y) => this.onClick(x, y)
+    );
+
+    this.bindUI();
+    this.refresh();
   }
 
-  start(): void {
-    this.state.setState("playing");
-    this.loop.start();
+  private get map() {
+    return MAPS[this.mapIndex];
   }
 
-  pause(): void {
-    this.state.setState("paused");
-  }
+  private bindUI(): void {
+    const get = (id: string) =>
+      document.getElementById(id);
 
-  resume(): void {
-    this.state.setState("playing");
-  }
+    get("start")?.addEventListener(
+      "click",
+      () => this.start()
+    );
 
-  setMap(mapId: string): boolean {
-    const map = MAPS.find(item => item.id === mapId);
+    get("next-wave")?.addEventListener(
+      "click",
+      () => this.startWave()
+    );
 
-    if (!map) return false;
+    get("pause")?.addEventListener(
+      "click",
+      () => {
+        this.state.pause();
+        this.refresh();
+      }
+    );
 
-    this.currentMap = map;
-    return true;
-  }
+    get("upgrade")?.addEventListener(
+      "click",
+      () => this.upgradeSelected()
+    );
 
-  getCurrentMap(): MapDefinition {
-    return this.currentMap;
-  }
+    get("sell")?.addEventListener(
+      "click",
+      () => this.sellSelected()
+    );
 
-  private update(delta: number): void {
-    if (!this.state.isPlaying()) return;
+    get("map-select")?.addEventListener(
+      "change",
+      event => {
+        const target = event.target as HTMLSelectElement;
 
-    this.animationTime += Math.min(delta, 0.1);
-  }
+        this.mapIndex = Number(target.value);
+        this.reset();
+      }
+    );
 
-  private render(): void {
-    const ctx = this.renderer.context;
-    const { width, height } = this.renderer.size;
-    const map = this.currentMap;
+    get("save")?.addEventListener(
+      "click",
+      () => {
+        this.save.save({
+          wave: this.waves.wave,
+          gold: this.economy.gold,
+          lives: this.economy.lives,
+          mapId: this.map.id
+        });
 
-    this.renderer.clear();
+        this.notice("Jogo guardado.");
+      }
+    );
 
-    ctx.fillStyle = map.background;
-    ctx.fillRect(0, 0, width, height);
+    get("load")?.addEventListener(
+      "click",
+      () => {
+        const data = this.save.load();
 
-    const centerX = width / 2;
-    const centerY = height / 2 - 30;
+        if (!data) {
+          this.notice("Não existe nenhum jogo guardado.");
+          return;
+        }
 
-    // Desenhar terreno isométrico
-    for (let y = 0; y < map.gridHeight; y++) {
-      for (let x = 0; x < map.gridWidth; x++) {
-        const pos = this.iso.toScreen({ x, y });
-
-        const sx = centerX + pos.x;
-        const sy = centerY + pos.y;
-
-        const isPath = isPathCell(map, x, y);
-
-        const obstacle = map.obstacles.some(
-          item => item.x === x && item.y === y
+        const index = MAPS.findIndex(
+          map => map.id === data.mapId
         );
 
-        ctx.beginPath();
-        ctx.moveTo(sx, sy);
-        ctx.lineTo(sx + 38, sy + 19);
-        ctx.lineTo(sx, sy + 38);
-        ctx.lineTo(sx - 38, sy + 19);
-        ctx.closePath();
+        this.mapIndex = Math.max(0, index);
+        this.economy.gold = data.gold;
+        this.economy.lives = data.lives;
+        this.waves.wave = data.wave;
 
-        if (isPath) {
-          ctx.fillStyle = map.pathColor;
-        } else {
-          ctx.fillStyle =
-            (x + y) % 2 === 0
-              ? map.tileColors[0]
-              : map.tileColors[1];
+        this.notice(
+          "Dados carregados. Inicia uma nova onda."
+        );
+
+        this.refresh();
+      }
+    );
+
+    get("meteor")?.addEventListener(
+      "click",
+      () => {
+        if (this.abilities.meteor(this.enemies)) {
+          this.audio.play(110);
         }
+      }
+    );
 
-        ctx.fill();
-
-        ctx.strokeStyle = "rgba(30, 30, 30, 0.18)";
-        ctx.lineWidth = 1;
-        ctx.stroke();
-
-        if (obstacle) {
-          this.drawRock(ctx, sx, sy);
+    get("freeze")?.addEventListener(
+      "click",
+      () => {
+        if (this.abilities.freeze(this.enemies)) {
+          this.audio.play(660);
         }
+      }
+    );
+
+    get("sound")?.addEventListener(
+      "change",
+      event => {
+        this.audio.enabled =
+          (event.target as HTMLInputElement).checked;
+      }
+    );
+
+    document
+      .querySelectorAll<HTMLButtonElement>("[data-tower]")
+      .forEach(button => {
+        button.addEventListener("click", () => {
+          this.placing = button.dataset.tower as TowerId;
+          this.selected = null;
+
+          this.notice(
+            `Escolheste ${TOWERS[this.placing].name}. Clica numa zona livre do mapa.`
+          );
+
+          this.refresh();
+        });
+      });
+  }
+
+  private start(): void {
+    this.reset();
+    this.state.start();
+    this.startWave();
+  }
+
+  private reset(): void {
+    this.loop.stop();
+
+    this.towers = [];
+    this.enemies = [];
+
+    this.selected = null;
+    this.placing = null;
+
+    this.kills = 0;
+    this.autoTimer = 2;
+
+    this.economy.reset();
+    this.waves = new WaveSystem();
+    this.abilities = new AbilitySystem();
+
+    this.state.start();
+
+    this.refresh();
+  }
+
+  private startWave(): void {
+    if (this.state.status !== "playing") {
+      this.state.start();
+    }
+
+    this.waves.start(this.map.path);
+    this.loop.start();
+
+    this.refresh();
+  }
+
+  private onClick(x: number, y: number): void {
+    if (this.state.status !== "playing") return;
+    if (this.state.paused) return;
+
+    const hit = [...this.towers]
+      .reverse()
+      .find(tower =>
+        Math.hypot(
+          tower.x - x,
+          tower.y - y
+        ) < 20
+      );
+
+    if (hit) {
+      this.selected = hit;
+      this.placing = null;
+      this.refresh();
+      return;
+    }
+
+    if (this.placing) {
+      const nearPath = this.map.path.some(
+        (a, index) => {
+          const b = this.map.path[index + 1];
+
+          if (!b) return false;
+
+          const dx = b.x - a.x;
+          const dy = b.y - a.y;
+
+          const lengthSquared =
+            dx * dx + dy * dy || 1;
+
+          const t = Math.max(
+            0,
+            Math.min(
+              1,
+              (
+                (x - a.x) * dx +
+                (y - a.y) * dy
+              ) / lengthSquared
+            )
+          );
+
+          const closestX = a.x + t * dx;
+          const closestY = a.y + t * dy;
+
+          return Math.hypot(
+            x - closestX,
+            y - closestY
+          ) < 38;
+        }
+      );
+
+      const nearTower = this.towers.some(
+        tower =>
+          Math.hypot(
+            tower.x - x,
+            tower.y - y
+          ) < 38
+      );
+
+      if (nearPath || nearTower) {
+        this.notice(
+          "Não podes construir nesse local."
+        );
+        return;
+      }
+
+      const stats = TOWERS[this.placing];
+
+      if (this.economy.spend(stats.cost)) {
+        this.towers.push(
+          new Tower(x, y, stats)
+        );
+
+        this.audio.play(520);
+        this.placing = null;
+      } else {
+        this.notice("Ouro insuficiente.");
+      }
+
+      this.refresh();
+      return;
+    }
+
+    this.selected = null;
+    this.refresh();
+  }
+
+  private upgradeSelected(): void {
+    if (!this.selected) return;
+
+    const success = this.upgrades.upgrade(
+      this.selected,
+      this.economy
+    );
+
+    this.notice(
+      success
+        ? "Torre melhorada."
+        : "Não tens ouro suficiente ou a torre já está no nível máximo."
+    );
+
+    this.refresh();
+  }
+
+  private sellSelected(): void {
+    if (!this.selected) return;
+
+    this.upgrades.sell(
+      this.selected,
+      this.economy
+    );
+
+    this.towers = this.towers.filter(
+      tower => tower !== this.selected
+    );
+
+    this.selected = null;
+
+    this.refresh();
+  }
+
+  private update(dt: number): void {
+    if (
+      this.state.paused ||
+      this.state.status !== "playing"
+    ) {
+      return;
+    }
+
+    this.abilities.update(dt);
+
+    this.waves.update(
+      dt,
+      this.map.path,
+      this.enemies
+    );
+
+    // Movimento dos inimigos
+    for (const enemy of this.enemies) {
+      if (enemy.update(dt)) {
+        this.economy.loseLife();
       }
     }
 
-    // Desenhar decoração conforme o mapa
-    this.drawEnvironment(ctx, centerX, centerY);
-
-    // Entrada e saída do percurso
-    this.drawMarker(
-      ctx,
-      centerX,
-      centerY,
-      map.path[0].x,
-      map.path[0].y,
-      "#55e58b",
-      "ENTRADA"
+    // Combate das torres
+    const defeated = this.combat.fire(
+      this.towers,
+      this.enemies,
+      dt
     );
 
-    const lastPoint = map.path[map.path.length - 1];
+    this.kills += defeated;
 
-    this.drawMarker(
-      ctx,
-      centerX,
-      centerY,
-      lastPoint.x,
-      lastPoint.y,
-      "#ff5555",
-      "BASE"
+    // Recompensa básica por inimigo derrotado
+    if (defeated > 0) {
+      this.economy.earn(defeated * 8);
+    }
+
+    // Remover inimigos derrotados ou que chegaram ao fim
+    this.enemies = this.enemies.filter(
+      enemy => !enemy.dead
     );
 
-    // Título
-    ctx.save();
+    // Próxima onda automática
+    this.autoTimer -= dt;
 
-    ctx.fillStyle = "#fff2d0";
-    ctx.font = "bold 25px Georgia";
-    ctx.textAlign = "center";
-    ctx.shadowColor = "#000";
-    ctx.shadowBlur = 8;
+    if (
+      this.waves.finished &&
+      this.autoTimer <= 0
+    ) {
+      this.autoTimer = 3;
+      this.startWave();
+    }
 
-    ctx.fillText("TOWER-DEFENSE244", width / 2, 42);
+    if (this.economy.lives <= 0) {
+      this.state.end("lost");
 
-    ctx.shadowBlur = 0;
-    ctx.font = "bold 13px Georgia";
-    ctx.fillStyle = map.accentColor;
+      this.notice(
+        "Derrota! Clica em Novo jogo para tentar novamente."
+      );
+    }
 
-    ctx.fillText(map.name.toUpperCase(), width / 2, 65);
+    this.refresh(false);
+  }
 
-    ctx.restore();
+  private render(): void {
+    this.renderer.draw(
+      this.map,
+      this.towers,
+      this.enemies,
+      this.selected
+    );
+  }
 
-    // Informação do mapa
-    ctx.save();
+  private refresh(render = true): void {
+    const set = (
+      id: string,
+      value: string
+    ): void => {
+      const element = document.getElementById(id);
 
-    ctx.fillStyle = "rgba(20, 25, 20, 0.75)";
-    ctx.fillRect(15, height - 65, 230, 48);
+      if (element) {
+        element.textContent = value;
+      }
+    };
 
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "13px Arial";
-    ctx.textAlign = "left";
+    set("gold", String(this.economy.gold));
+    set("lives", String(this.economy.lives));
+    set("wave", String(this.waves.wave));
+    set("kills", String(this.kills));
 
-    ctx.fillText(
-      `Dificuldade: ${map.difficulty}/6`,
-      28,
-      height - 43
+    set(
+      "tower-info",
+      this.selected
+        ? `${this.selected.stats.name} · Nível ${this.selected.level} · Dano ${this.selected.damage} · Alcance ${Math.round(this.selected.range)}`
+        : "Nenhuma torre selecionada"
     );
 
-    ctx.fillText(
-      `Moedas: ${map.startingGold} | Vidas: ${map.startingLives}`,
-      28,
-      height - 23
-    );
+    const upgradeButton =
+      document.getElementById(
+        "upgrade"
+      ) as HTMLButtonElement | null;
 
-    ctx.restore();
-  }
+    if (upgradeButton) {
+      upgradeButton.disabled =
+        !this.selected ||
+        this.selected.level >= 3;
 
-  private drawMarker(
-    ctx: CanvasRenderingContext2D,
-    centerX: number,
-    centerY: number,
-    gridX: number,
-    gridY: number,
-    color: string,
-    label: string
-  ): void {
-    const pos = this.iso.toScreen({
-      x: gridX,
-      y: gridY
-    });
-
-    const x = centerX + pos.x;
-    const y = centerY + pos.y;
-
-    ctx.save();
-
-    ctx.fillStyle = color;
-    ctx.shadowColor = color;
-    ctx.shadowBlur = 15;
-
-    ctx.beginPath();
-    ctx.arc(x, y + 19, 9, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.shadowBlur = 0;
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "bold 10px Arial";
-    ctx.textAlign = "center";
-    ctx.fillText(label, x, y - 10);
-
-    ctx.restore();
-  }
-
-  private drawRock(
-    ctx: CanvasRenderingContext2D,
-    x: number,
-    y: number
-  ): void {
-    ctx.save();
-
-    ctx.fillStyle = "rgba(0,0,0,0.2)";
-    ctx.beginPath();
-    ctx.ellipse(x, y + 18, 19, 8, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.fillStyle = "#68665e";
-    ctx.beginPath();
-    ctx.moveTo(x - 15, y + 13);
-    ctx.lineTo(x - 12, y - 2);
-    ctx.lineTo(x - 3, y - 12);
-    ctx.lineTo(x + 12, y - 5);
-    ctx.lineTo(x + 17, y + 12);
-    ctx.closePath();
-    ctx.fill();
-
-    ctx.fillStyle = "#99958a";
-    ctx.beginPath();
-    ctx.moveTo(x - 12, y - 2);
-    ctx.lineTo(x - 3, y - 12);
-    ctx.lineTo(x + 4, y - 5);
-    ctx.lineTo(x - 3, y + 5);
-    ctx.closePath();
-    ctx.fill();
-
-    ctx.restore();
-  }
-
-  private drawEnvironment(
-    ctx: CanvasRenderingContext2D,
-    centerX: number,
-    centerY: number
-  ): void {
-    const theme = this.currentMap.theme;
-
-    if (theme === "forest" || theme === "dark") {
-      this.drawTree(ctx, centerX - 210, centerY - 80);
-      this.drawTree(ctx, centerX + 260, centerY - 100);
-      this.drawTree(ctx, centerX - 280, centerY + 110);
+      upgradeButton.textContent =
+        this.selected &&
+        this.selected.level < 3
+          ? `Melhorar (${UPGRADE_COST[this.selected.level + 1]} ouro)`
+          : "Melhorar torre";
     }
 
-    if (theme === "desert") {
-      this.drawCactus(ctx, centerX - 250, centerY);
-      this.drawCactus(ctx, centerX + 280, centerY + 80);
+    const status =
+      document.getElementById("status");
+
+    if (status) {
+      status.textContent = this.state.paused
+        ? "Jogo em pausa"
+        : this.state.status === "lost"
+          ? "Derrota"
+          : this.state.status === "playing"
+            ? "A defender o reino"
+            : "Prepara a defesa";
     }
 
-    if (theme === "ice") {
-      this.drawIceCrystal(ctx, centerX - 230, centerY);
-      this.drawIceCrystal(ctx, centerX + 250, centerY + 70);
-    }
-
-    if (theme === "volcano") {
-      this.drawLavaRock(ctx, centerX - 250, centerY);
-      this.drawLavaRock(ctx, centerX + 260, centerY + 70);
-    }
-
-    if (theme === "kingdom") {
-      this.drawHouse(ctx, centerX + 180, centerY + 30);
-      this.drawHouse(ctx, centerX - 220, centerY + 90);
+    if (render) {
+      this.render();
     }
   }
 
-  private drawTree(
-    ctx: CanvasRenderingContext2D,
-    x: number,
-    y: number
-  ): void {
-    ctx.save();
+  private notice(message: string): void {
+    const element =
+      document.getElementById("notice");
 
-    ctx.fillStyle = "rgba(20,40,20,0.25)";
-    ctx.beginPath();
-    ctx.ellipse(x, y + 20, 24, 10, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.fillStyle = "#725039";
-    ctx.fillRect(x - 5, y - 4, 10, 29);
-
-    ctx.fillStyle = this.currentMap.theme === "dark"
-      ? "#25352d"
-      : "#315b36";
-
-    ctx.beginPath();
-    ctx.arc(x, y - 25, 25, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.fillStyle = this.currentMap.theme === "dark"
-      ? "#48513e"
-      : "#527d42";
-
-    ctx.beginPath();
-    ctx.arc(x - 11, y - 36, 17, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.restore();
-  }
-
-  private drawHouse(
-    ctx: CanvasRenderingContext2D,
-    x: number,
-    y: number
-  ): void {
-    ctx.save();
-
-    ctx.fillStyle = "#c5a477";
-    ctx.fillRect(x - 31, y - 19, 62, 43);
-
-    ctx.fillStyle = "#853e32";
-    ctx.beginPath();
-    ctx.moveTo(x - 39, y - 19);
-    ctx.lineTo(x, y - 49);
-    ctx.lineTo(x + 39, y - 19);
-    ctx.closePath();
-    ctx.fill();
-
-    ctx.fillStyle = "#49301f";
-    ctx.fillRect(x - 7, y - 2, 15, 26);
-
-    ctx.restore();
-  }
-
-  private drawCactus(
-    ctx: CanvasRenderingContext2D,
-    x: number,
-    y: number
-  ): void {
-    ctx.save();
-
-    ctx.fillStyle = "#387d49";
-    ctx.fillRect(x - 5, y - 30, 10, 50);
-    ctx.fillRect(x - 17, y - 12, 12, 7);
-    ctx.fillRect(x - 17, y - 23, 7, 18);
-    ctx.fillRect(x + 5, y - 3, 12, 7);
-    ctx.fillRect(x + 10, y - 18, 7, 22);
-
-    ctx.restore();
-  }
-
-  private drawIceCrystal(
-    ctx: CanvasRenderingContext2D,
-    x: number,
-    y: number
-  ): void {
-    ctx.save();
-
-    ctx.fillStyle = "#a8f1ff";
-    ctx.strokeStyle = "#e3ffff";
-    ctx.lineWidth = 2;
-
-    ctx.beginPath();
-    ctx.moveTo(x, y - 42);
-    ctx.lineTo(x + 15, y);
-    ctx.lineTo(x, y + 15);
-    ctx.lineTo(x - 15, y);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-
-    ctx.restore();
-  }
-
-  private drawLavaRock(
-    ctx: CanvasRenderingContext2D,
-    x: number,
-    y: number
-  ): void {
-    ctx.save();
-
-    ctx.fillStyle = "#49332b";
-    ctx.beginPath();
-    ctx.arc(x, y, 23, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.strokeStyle = "#ff6b35";
-    ctx.lineWidth = 4;
-    ctx.shadowColor = "#ff3c16";
-    ctx.shadowBlur = 12;
-
-    ctx.beginPath();
-    ctx.moveTo(x - 10, y + 7);
-    ctx.lineTo(x, y - 8);
-    ctx.lineTo(x + 8, y + 4);
-    ctx.stroke();
-
-    ctx.restore();
-  }
-
-  destroy(): void {
-    this.loop.stop();
-    this.input.destroy();
-    this.renderer.destroy();
+    if (element) {
+      element.textContent = message;
+    }
   }
 }
