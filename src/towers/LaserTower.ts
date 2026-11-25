@@ -1,21 +1,8 @@
-
 import { Tower } from "../entities/Tower";
+import { TOWERS } from "../data/towers";
 
 export class LaserTower extends Tower {
-  constructor(x = 0, y = 0) {
-    super({
-      name: "Laser Tower",
-      damage: 35,
-      range: 260,
-      attackSpeed: 2,
-      cost: 350,
-      projectileSpeed: 900,
-      color: "#ff4fe0",
-      damageType: "magic",
-      targetMode: "nearest",
-      x,
-      y
-    });
+  constructor(x: number, y: number) {
+    super(x, y, TOWERS.laser);
   }
 }
-

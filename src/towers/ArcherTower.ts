@@ -1,21 +1,8 @@
-
 import { Tower } from "../entities/Tower";
+import { TOWERS } from "../data/towers";
 
 export class ArcherTower extends Tower {
-  constructor(x = 0, y = 0) {
-    super({
-      name: "Archer Tower",
-      damage: 25,
-      range: 175,
-      attackSpeed: 1.5,
-      cost: 100,
-      projectileSpeed: 450,
-      color: "#d6a34a",
-      damageType: "physical",
-      targetMode: "first",
-      x,
-      y
-    });
+  constructor(x: number, y: number) {
+    super(x, y, TOWERS.archer);
   }
 }
-

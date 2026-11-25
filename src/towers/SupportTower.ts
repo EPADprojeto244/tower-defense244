@@ -1,21 +1,8 @@
-
 import { Tower } from "../entities/Tower";
+import { TOWERS } from "../data/towers";
 
 export class SupportTower extends Tower {
-  constructor(x = 0, y = 0) {
-    super({
-      name: "Support Tower",
-      damage: 12,
-      range: 230,
-      attackSpeed: 1.4,
-      cost: 280,
-      projectileSpeed: 400,
-      color: "#56e0b0",
-      damageType: "magic",
-      targetMode: "nearest",
-      x,
-      y
-    });
+  constructor(x: number, y: number) {
+    super(x, y, TOWERS.support);
   }
 }
-
