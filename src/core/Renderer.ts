@@ -1,97 +1,159 @@
-
-export interface RendererSize {
-  width: number;
-  height: number;
-}
+import type { GameMap } from "../data/maps";
+import type { Tower } from "../entities/Tower";
+import type { Enemy } from "../entities/Enemy";
 
 export class Renderer {
-  readonly context: CanvasRenderingContext2D;
-
-  private observer: ResizeObserver;
-  private pixelRatio = 1;
-
-  size: RendererSize = {
-    width: 0,
-    height: 0
-  };
-
   constructor(
-    private readonly canvas: HTMLCanvasElement
-  ) {
-    const context = canvas.getContext("2d", {
-      alpha: false
-    });
+    private ctx: CanvasRenderingContext2D
+  ) {}
 
-    if (!context) {
-      throw new Error("Não foi possível criar o Canvas 2D.");
+  draw(
+    map: GameMap,
+    towers: Tower[],
+    enemies: Enemy[],
+    selected: Tower | null
+  ): void {
+    const ctx = this.ctx;
+    const width = ctx.canvas.width;
+    const height = ctx.canvas.height;
+
+    ctx.clearRect(0, 0, width, height);
+
+    const background = ctx.createLinearGradient(
+      0, 0, width, height
+    );
+
+    background.addColorStop(0, "#203b36");
+    background.addColorStop(1, "#111d2b");
+
+    ctx.fillStyle = background;
+    ctx.fillRect(0, 0, width, height);
+
+    // Grelha do terreno
+    for (let x = 0; x < width; x += 48) {
+      for (let y = 0; y < height; y += 48) {
+        ctx.fillStyle =
+          (x / 48 + y / 48) % 2
+            ? "rgba(255,255,255,.025)"
+            : "rgba(0,0,0,.035)";
+
+        ctx.fillRect(x, y, 48, 48);
+      }
     }
 
-    this.context = context;
+    // Caminho dos inimigos
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = "#b69b67";
+    ctx.lineWidth = 48;
 
-    this.observer = new ResizeObserver(() => {
-      this.resize();
+    ctx.beginPath();
+
+    map.path.forEach((point, index) => {
+      if (index === 0) {
+        ctx.moveTo(point.x, point.y);
+      } else {
+        ctx.lineTo(point.x, point.y);
+      }
     });
 
-    this.observer.observe(canvas);
+    ctx.stroke();
 
-    this.resize();
-  }
+    ctx.strokeStyle = "#6d6048";
+    ctx.lineWidth = 3;
+    ctx.stroke();
 
-  private resize(): void {
-    const rect = this.canvas.getBoundingClientRect();
+    // Torres
+    towers.forEach((tower) => {
+      if (selected === tower) {
+        ctx.beginPath();
+        ctx.arc(
+          tower.x,
+          tower.y,
+          tower.range,
+          0,
+          Math.PI * 2
+        );
 
-    this.pixelRatio = Math.min(
-      window.devicePixelRatio || 1,
-      2
-    );
+        ctx.fillStyle = "rgba(110,205,255,.10)";
+        ctx.fill();
 
-    const width = Math.max(1, rect.width);
-    const height = Math.max(1, rect.height);
+        ctx.strokeStyle = "rgba(130,220,255,.6)";
+        ctx.stroke();
+      }
 
-    this.canvas.width = Math.round(
-      width * this.pixelRatio
-    );
+      ctx.fillStyle = "#18202c";
+      ctx.beginPath();
+      ctx.arc(tower.x, tower.y, 17, 0, Math.PI * 2);
+      ctx.fill();
 
-    this.canvas.height = Math.round(
-      height * this.pixelRatio
-    );
+      ctx.fillStyle = tower.stats.color;
+      ctx.beginPath();
+      ctx.arc(tower.x, tower.y, 12, 0, Math.PI * 2);
+      ctx.fill();
 
-    this.size = {
-      width,
-      height
-    };
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "bold 10px sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText(
+        String(tower.level),
+        tower.x,
+        tower.y + 4
+      );
+    });
 
-    this.context.setTransform(
-      this.pixelRatio,
-      0,
-      0,
-      this.pixelRatio,
-      0,
-      0
-    );
+    // Inimigos e barras de vida
+    enemies.forEach((enemy) => {
+      ctx.fillStyle = "rgba(0,0,0,.3)";
+      ctx.beginPath();
+      ctx.ellipse(
+        enemy.x,
+        enemy.y + enemy.stats.radius,
+        enemy.stats.radius,
+        4,
+        0,
+        0,
+        Math.PI * 2
+      );
+      ctx.fill();
 
-    this.context.imageSmoothingEnabled = true;
-  }
+      ctx.fillStyle = enemy.stats.color;
+      ctx.beginPath();
+      ctx.arc(
+        enemy.x,
+        enemy.y,
+        enemy.stats.radius,
+        0,
+        Math.PI * 2
+      );
+      ctx.fill();
 
-  clear(color = "#18251d"): void {
-    const { width, height } = this.size;
+      const barWidth = enemy.stats.radius * 2;
+      const healthPercent = Math.max(
+        0,
+        enemy.hp / enemy.maxHp
+      );
 
-    this.context.fillStyle = color;
-    this.context.fillRect(0, 0, width, height);
-  }
+      ctx.fillStyle = "#351e27";
+      ctx.fillRect(
+        enemy.x - enemy.stats.radius,
+        enemy.y - enemy.stats.radius - 9,
+        barWidth,
+        4
+      );
 
-  getCanvasPosition(
-    event: PointerEvent
-  ): { x: number; y: number } {
-    const rect = this.canvas.getBoundingClientRect();
+      ctx.fillStyle = "#7ee081";
+      ctx.fillRect(
+        enemy.x - enemy.stats.radius,
+        enemy.y - enemy.stats.radius - 9,
+        barWidth * healthPercent,
+        4
+      );
+    });
 
-    return {
-      x: event.clientX - rect.left,
-      y: event.clientY - rect.top
-    };
-  }
-
-  destroy(): void {
-    this.observer.disconnect();
+    ctx.fillStyle = "rgba(255,255,255,.8)";
+    ctx.font = "12px sans-serif";
+    ctx.textAlign = "left";
+    ctx.fillText(map.name, 18, 22);
   }
 }

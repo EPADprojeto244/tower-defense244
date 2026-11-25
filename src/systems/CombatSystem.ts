@@ -1,58 +1,77 @@
-
-import { Enemy } from "../entities/Enemy";
 import { Tower } from "../entities/Tower";
-import { Projectile } from "../entities/Projectile";
-
-export interface CombatCallbacks {
-  onEnemyKilled?: (enemy: Enemy) => void;
-  onEnemyReachedBase?: (enemy: Enemy) => void;
-}
+import { Enemy } from "../entities/Enemy";
 
 export class CombatSystem {
-  update(
-    delta: number,
-    enemies: Enemy[],
+  fire(
     towers: Tower[],
-    projectiles: Projectile[],
-    callbacks: CombatCallbacks = {}
-  ): void {
-    // Atualizar movimento dos inimigos
-    for (const enemy of enemies) {
-      enemy.update(delta);
-    }
+    enemies: Enemy[],
+    dt: number
+  ): number {
+    let kills = 0;
 
-    // Atualizar ataques das torres
     for (const tower of towers) {
-      tower.update(delta, enemies, projectiles);
-    }
+      tower.update(dt);
 
-    // Atualizar projéteis
-    for (const projectile of projectiles) {
-      projectile.update(delta);
-    }
-
-    // Remover projéteis inativos
-    for (let i = projectiles.length - 1; i >= 0; i--) {
-      if (!projectiles[i].active) {
-        projectiles.splice(i, 1);
-      }
-    }
-
-    // Processar inimigos eliminados e os que chegaram à base
-    for (let i = enemies.length - 1; i >= 0; i--) {
-      const enemy = enemies[i];
-
-      if (enemy.dead) {
-        callbacks.onEnemyKilled?.(enemy);
-        enemies.splice(i, 1);
+      if (
+        tower.stats.id === "support" ||
+        tower.cooldown > 0
+      ) {
         continue;
       }
 
-      if (enemy.reachedEnd) {
-        callbacks.onEnemyReachedBase?.(enemy);
-        enemies.splice(i, 1);
+      const target = enemies
+        .filter(enemy =>
+          !enemy.dead &&
+          Math.hypot(
+            enemy.x - tower.x,
+            enemy.y - tower.y
+          ) <= tower.range
+        )
+        .sort(
+          (a, b) =>
+            b.segment - a.segment ||
+            b.progress - a.progress
+        )[0];
+
+      if (!target) continue;
+
+      tower.cooldown = tower.interval;
+
+      for (const enemy of enemies) {
+        if (enemy.dead) continue;
+
+        const distance = Math.hypot(
+          enemy.x - target.x,
+          enemy.y - target.y
+        );
+
+        const isTarget = enemy === target;
+        const inSplash =
+          tower.stats.splash !== undefined &&
+          distance <= tower.stats.splash;
+
+        if (!isTarget && !inSplash) continue;
+
+        const damage = isTarget
+          ? tower.damage
+          : tower.damage * 0.55;
+
+        const wasAlive = !enemy.dead;
+
+        enemy.takeDamage(damage);
+
+        if (tower.stats.slow) {
+          enemy.slow(
+            tower.stats.slowDuration ?? 1
+          );
+        }
+
+        if (wasAlive && enemy.dead) {
+          kills++;
+        }
       }
     }
+
+    return kills;
   }
 }
-

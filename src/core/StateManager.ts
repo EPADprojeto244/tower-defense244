@@ -1,48 +1,27 @@
-
-export type GameState =
-  | "menu"
-  | "map-selection"
-  | "playing"
-  | "paused"
-  | "victory"
-  | "game-over";
+export type GameStatus = "menu" | "playing" | "won" | "lost";
 
 export class StateManager {
-  private currentState: GameState = "menu";
+  status: GameStatus = "menu";
+  paused = false;
 
-  private readonly listeners = new Set<
-    (state: GameState) => void
-  >();
-
-  getState(): GameState {
-    return this.currentState;
+  start(): void {
+    this.status = "playing";
+    this.paused = false;
   }
 
-  setState(state: GameState): void {
-    if (state === this.currentState) return;
-
-    this.currentState = state;
-
-    for (const listener of this.listeners) {
-      listener(state);
+  pause(): void {
+    if (this.status === "playing") {
+      this.paused = !this.paused;
     }
   }
 
-  isPlaying(): boolean {
-    return this.currentState === "playing";
+  end(result: "won" | "lost"): void {
+    this.status = result;
+    this.paused = false;
   }
 
-  isPaused(): boolean {
-    return this.currentState === "paused";
-  }
-
-  subscribe(
-    listener: (state: GameState) => void
-  ): () => void {
-    this.listeners.add(listener);
-
-    return () => {
-      this.listeners.delete(listener);
-    };
+  reset(): void {
+    this.status = "menu";
+    this.paused = false;
   }
 }

@@ -1,25 +1,9 @@
-
 import { Enemy } from "../entities/Enemy";
+import { ENEMIES } from "../data/enemies";
+import type { Point } from "../data/maps";
 
 export class IceBeast extends Enemy {
-  constructor(x = 0, y = 0, multiplier = 1) {
-    super({
-      name: "Ice Beast",
-      health: 500 * multiplier,
-      speed: 35,
-      armor: 12,
-      reward: 65,
-      baseDamage: 5,
-      radius: 20,
-      color: "#65d9ed",
-      resistances: {
-        ice: 0.85,
-        fire: -0.2
-      }
-    });
-
-    this.x = x;
-    this.y = y;
+  constructor(path: Point[]) {
+    super(ENEMIES.iceBeast, path);
   }
 }
-
